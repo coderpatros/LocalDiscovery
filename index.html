@@ -1,0 +1,436 @@
+<!--
+    Copyright 2016 Patrick Dwyer
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>
+-->
+<html>
+<head>
+    <meta charset=utf-8 />
+    <title>Local Discovery</title>
+    <!-- Set the viewport for mobile devices -->
+    <meta name='viewport' content='initial-scale=1,maximum-scale=1,user-scalable=no' />
+
+    <!-- Reference leaflet and esri leaflet for working with arcgis services-->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.0.1/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.0.1/dist/leaflet-src.js"></script>
+    <script src="https://unpkg.com/esri-leaflet@2.0.4"></script>
+
+    <!-- Include a font I like :) -->
+    <link href="https://fonts.googleapis.com/css?family=Montserrat:400,700" rel="stylesheet" type="text/css">
+
+    <!-- Include github button js -->
+    <script async defer src="https://buttons.github.io/buttons.js"></script>
+
+    <!-- Include jquery & mustache template library -->
+    <script src="https://code.jquery.com/jquery-3.1.1.min.js"></script>
+    <script src="js/mustache.min.js"></script>
+
+    <style>
+        body {
+            font-family: 'Montserrat', sans-serif;
+            margin:0;
+            padding:0;
+        }
+
+        /* Makes the map take up the whole screen */
+        #map { position: absolute; top:0; bottom:0; right:0; left:0; }
+
+        /* This is for the GitHub fork me button */
+        #fork-me {
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 20px;
+            text-align: center;
+            z-index: 500;
+        }
+
+        /* This is for the disclaimer popup */
+        #disclaimer {
+            visibility: hidden;
+            position: absolute;
+            left: 0;
+            top: 0;
+            width:100%;
+            height:100%;
+            text-align:center;
+            z-index: 1000;
+            background-color: rgba(0, 0, 0, 0.75);
+        }
+
+        #disclaimer div {
+            width: 300px;
+            margin: 50px auto;
+            background-color: #fff;
+            border: 1px solid #000;
+            padding: 15px;
+            text-align:center;
+        }
+
+        ul.legend {
+            text-align: left;
+            list-style-type: square;
+        }
+
+        ul.legend .legend-text {
+            color: #000;
+        }
+
+        #controls-wrapper {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 400;
+            background: white;
+            padding: 10px;
+        }
+
+        #controls-wrapper button {
+            float: right;
+        }
+
+        #controls-wrapper:not(.hidden) button.show-controls {
+            display: none;
+        }
+
+        #controls-wrapper.hidden button.hide-controls,
+        #controls-wrapper.hidden div
+        {
+            display: none;
+        }
+
+        #basemaps {
+            margin-bottom: 5px;
+        }
+
+        li.feature-layer.off {
+            list-style: none;
+        }
+
+        li.feature-layer.nice-to-have {
+            color: green;
+        }
+
+        li.feature-layer.must-have {
+            color: red;
+        }
+
+    </style>
+</head>
+<body>
+
+<!-- Div for the map, take note of the id, it's used below -->
+<div id="map"></div>
+
+<!-- Div for the map type selector -->
+<div id="controls-wrapper" class="leaflet-bar">
+    <button type="button" class="hide-controls">Hide</button>
+    <button type="button" class="show-controls">Show</button>
+    <div>
+        <h6>
+            Map Type
+            <select name="basemaps" id="basemaps" onChange="changeBasemap(basemaps)">
+                <option value="Streets">Streets</option>
+                <option value="Topographic">Topographic</option>
+                <!--<option value="NationalGeographic">National Geographic</option>-->
+                <!--<option value="Oceans">Oceans</option>-->
+                <option value="Gray">Gray</option>
+                <option value="DarkGray">Dark Gray</option>
+                <option value="Imagery">Imagery</option>
+                <!--<option value="ShadedRelief">Shaded Relief</option>-->
+            </select>
+        </h6>
+        <h6>Features</h6>
+        <ul id="featureLayerControlsContainer"></ul>
+    </div>
+</div>
+
+<!-- Div for GitHub fork me button -->
+<div id="fork-me">
+    <a class="github-button" href="https://github.com/patros/DogsUnleashed/fork" data-style="mega" aria-label="Fork me on GitHub">Fork me on GitHub</a>
+</div>
+
+<!-- Disclaimer popup content -->
+<div id="disclaimer">
+    <div>
+        <strong>Local Discovery</strong>
+        <p>This is an interactive map with options for displaying points of interest around the Sunshine Coast.</p>
+        <p>The useful part of this app isn't that it can display where things like BBQ's, playgrounds and toilets are,
+        but the ability to combine and require multiple things together. For example, only display playgrounds that also
+        have a BBQ and public toilet.</p>
+        <p>To enable a feature click on it. Green means the facility is a nice to have, red means you require it.</p>
+        <p>The distance allowed between facilities is 250m.</p>
+        <p><button type="button" onclick='disclaimerToggle()'>Continue</button></p>
+    </div>
+</div>
+
+<script>
+    // Used to display/hide the disclaimer popup
+    function disclaimerToggle() {
+        el = document.getElementById("disclaimer");
+        el.style.visibility = (el.style.visibility == "visible") ? "hidden" : "visible";
+    }
+
+    // Used to display/hide the controls
+    $(".hide-controls").click(function() {
+        $("#controls-wrapper").addClass("hidden");
+    });
+    $(".show-controls").click(function() {
+        $("#controls-wrapper").removeClass("hidden");
+    });
+
+    // Initialise leaflet map in the element with the id 'map', set initial position (-26.653127, 153.067969) and zoom (11)
+    var map = L.map('map').setView([ -26.653127, 153.067969 ], 11);
+
+    // Set up map type selector
+    var layer, labelsLayer;
+
+    function setBasemap(basemapName) {
+        if (layer) map.removeLayer(layer);
+        if (labelsLayer) map.removeLayer(labelsLayer);
+
+        layer = L.esri.basemapLayer(basemapName);
+        if (basemapName === 'ShadedRelief'
+            || basemapName === 'Oceans'
+            || basemapName === 'Gray'
+            || basemapName === 'DarkGray'
+            || basemapName === 'Imagery'
+            || basemapName === 'Terrain'
+        ) {
+            labelsLayer = L.esri.basemapLayer(basemapName + 'Labels');
+        }
+
+        if (layer) map.addLayer(layer);
+        if (labelsLayer) map.addLayer(labelsLayer);
+    }
+
+    function changeBasemap(basemaps){
+        var basemap = basemaps.value;
+        setBasemap(basemap);
+    }
+
+    setBasemap("Streets");
+
+    var featureLayerOrder = [
+        "BBQ",
+        "Playground",
+        "Playground with liberty swing",
+        "Patrolled beach",
+        "Public toilet",
+        "Wifi hotspot"
+    ];
+
+    var featureLayers = {
+        BBQ: L.esri.featureLayer({
+            url: "http://gisservices.scc.qld.gov.au/arcgis/rest/services/Structure/Structure_SCRC/MapServer/0",
+            pointToLayer: function(geojson, latlng) {
+                return L.marker(latlng, {
+                    icon: L.icon({
+                        iconUrl: "http://gisservices.scc.qld.gov.au/arcgis/rest/services/Structure/Structure_SCRC/MapServer/0/images/494bdcc2782d0ead17f47ab7f9d9b482",
+                        iconSize: [18, 18],
+                        iconAnchor: [9, 9],
+                        popupAnchor: [0, -11]
+                    })
+                });
+            }
+        }),
+        Playground: L.esri.featureLayer({
+            url: "https://gisservices.scc.qld.gov.au/arcgis/rest/services/Society/Society_SCRC/MapServer/42",
+            pointToLayer: function(geojson, latlng) {
+                return L.marker(latlng, {
+                    icon: L.icon({
+                        iconUrl: "https://gisservices.scc.qld.gov.au/arcgis/rest/services/Society/Society_SCRC/MapServer/42/images/5d1b4f76f32593fb8bac878c6ad3e4f4",
+                        iconSize: [18, 18],
+                        iconAnchor: [9, 9],
+                        popupAnchor: [0, -11]
+                    })
+                });
+            }
+        }),
+        "Playground with liberty swing": L.esri.featureLayer({
+            url: "https://gisservices.scc.qld.gov.au/arcgis/rest/services/Society/Society_SCRC/MapServer/43",
+            pointToLayer: function(geojson, latlng) {
+                return L.marker(latlng, {
+                    icon: L.icon({
+                        iconUrl: "https://gisservices.scc.qld.gov.au/arcgis/rest/services/Society/Society_SCRC/MapServer/43/images/6c86f20a347766f061d3801ecf4e97c3",
+                        iconSize: [18, 18],
+                        iconAnchor: [9, 9],
+                        popupAnchor: [0, -11]
+                    })
+                });
+            }
+        }),
+        "Patrolled beach": L.esri.featureLayer({
+            url: "https://gisservices.scc.qld.gov.au/arcgis/rest/services/Society/Society_SCRC/MapServer/6",
+            pointToLayer: function(geojson, latlng) {
+                return L.marker(latlng, {
+                    icon: L.icon({
+                        iconUrl: "https://gisservices.scc.qld.gov.au/arcgis/rest/services/Society/Society_SCRC/MapServer/6/images/2f345575a1c4b502822e4f679498b783",
+                        iconSize: [18, 18],
+                        iconAnchor: [9, 9],
+                        popupAnchor: [0, -11]
+                    })
+                });
+            }
+        }),
+        "Public toilet": L.esri.featureLayer({
+            url:  "http://gisservices.scc.qld.gov.au/arcgis/rest/services/Society/Society_SCRC/MapServer/46",
+            pointToLayer: function(geojson, latlng) {
+                return L.marker(latlng, {
+                    icon: L.icon({
+                        iconUrl: "http://gisservices.scc.qld.gov.au/arcgis/rest/services/Society/Society_SCRC/MapServer/46/images/cbab5e58173b8465f960db5698e567fb",
+                        iconSize: [18, 18],
+                        iconAnchor: [9, 9],
+                        popupAnchor: [0, -11]
+                    })
+                });
+            }
+        }),
+        "Wifi hotspot": L.esri.featureLayer({
+            url:  "https://gisservices.scc.qld.gov.au/arcgis/rest/services/UtilitiesCommunication/Utilities_SCRC/MapServer/0",
+            pointToLayer: function(geojson, latlng) {
+                return L.marker(latlng, {
+                    icon: L.icon({
+                        iconUrl: "https://gisservices.scc.qld.gov.au/arcgis/rest/services/UtilitiesCommunication/Utilities_SCRC/MapServer/0/images/d36354f9e2ef380c17cdd52bb2ff2d99",
+                        iconSize: [18, 18],
+                        iconAnchor: [9, 9],
+                        popupAnchor: [0, -11]
+                    })
+                });
+            }
+        })
+    };
+
+    featureLayers["Wifi hotspot"].setWhere("WiFiType<>'Paid WiFi'");
+
+    var featureLayerState = {};
+
+    var $featureLayerControlsContainer = $("#featureLayerControlsContainer");
+    var featureLayerControlTemplate = '<li class="feature-layer off" data-feature-layer="{{name}}">{{name}}</li>';
+    $.each(featureLayerOrder, function(index, featureLayerName) {
+        $(Mustache.render(featureLayerControlTemplate, {
+            name: featureLayerName
+        })).appendTo($featureLayerControlsContainer);
+        featureLayers[featureLayerName].on("load", filterFeatures);
+    });
+
+    var featureLayerStateNames = [
+        "off",
+        "nice-to-have",
+        "must-have"
+    ];
+
+    $("li.feature-layer").click(function() {
+        var $featureLayerControl = $(this);
+        var featureLayerName = $featureLayerControl.data("feature-layer");
+        var featureLayer = featureLayers[featureLayerName];
+        // 0 off, 1 nice to have, 2 must have
+        featureLayerState[featureLayerName] = ((featureLayerState[featureLayerName] || 0) + 1) % 3;
+        $.each(featureLayerStateNames, function(index, state) {
+            if (index == featureLayerState[featureLayerName]) {
+                $featureLayerControl.addClass(state);
+            } else {
+                $featureLayerControl.removeClass(state);
+            }
+        });
+
+        if (featureLayerState[featureLayerName]) {
+            featureLayer.addTo(map);
+        } else {
+            featureLayer.remove();
+        }
+
+        filterFeatures();
+    });
+
+    function filterFeatures() {
+        var requiredFeatureLayers = [];
+        $.each(featureLayerState, function(featureLayerName, stateIndex) {
+            if (stateIndex == 2) {
+                requiredFeatureLayers.push(featureLayers[featureLayerName]);
+            }
+        });
+
+        $.each(featureLayerState, function(featureName, stateIndex) {
+            if (stateIndex) {
+                featureLayers[featureName].eachFeature(function(thisFeatureItem) {
+                    var include = true;
+                    if (requiredFeatureLayers.length) {
+                        include = false;
+                        var requirementsMet = 0;
+                        $.each(requiredFeatureLayers, function(index, requiredFeatureLayer) {
+                            var matchFound = false;
+                            requiredFeatureLayer.eachFeature(function(comparisonFeature) {
+                                if (!matchFound && thisFeatureItem.getLatLng().distanceTo(comparisonFeature.getLatLng()) < 250) {
+                                    matchFound = true;
+                                }
+                            });
+                            if (matchFound) requirementsMet++;
+                        });
+                        if (requirementsMet == requiredFeatureLayers.length) {
+                            include = true;
+                        }
+                    }
+                    try {
+                        if (include) {
+                            L.DomUtil.setOpacity(thisFeatureItem._icon, 1);
+                        } else {
+                            L.DomUtil.setOpacity(thisFeatureItem._icon, 0);
+                        }
+                    } catch (e) {
+                        // we'll ignore this, the point doesn't have a dom element yet
+                    }
+                });
+            }
+        });
+    }
+
+    // this section sets up location awareness if available
+    if (navigator) {
+        var userLocationMarker;
+
+        // set the initial map position and zoom in if possible
+        navigator.geolocation.getCurrentPosition(
+            function(pos) {
+                var newLocation = L.latLng(pos.coords.latitude, pos.coords.longitude);
+                // only jump the map if the distance makes sense
+                if (map.getCenter().distanceTo(newLocation) < 50000) {
+                    map.setView([ pos.coords.latitude, pos.coords.longitude ], 15);
+                }
+            },
+            undefined,
+            {
+                timeout: 5000
+            }
+        );
+
+        // create and update a you are here style marker
+        navigator.geolocation.watchPosition(
+            function(pos) {
+                if (pos.coords.accuracy < 50) {
+                    if (!userLocationMarker) {
+                        userLocationMarker = L.marker([pos.coords.latitude, pos.coords.longitude]).addTo(map);
+                    }
+                    userLocationMarker.setLatLng(L.latLng(pos.coords.latitude, pos.coords.longitude));
+                }
+            }
+        );
+    }
+
+    // initial display of the disclaimer
+    disclaimerToggle();
+</script>
+
+</body>
+</html>
